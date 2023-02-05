@@ -1,29 +1,25 @@
 import cv2
 from cvzone.HandTrackingModule import HandDetector
-
 #
 import math
 import mediapipe as mp
 from pynput.mouse import Button, Controller
 import pyautogui
 import os
-
 #
-
-
 import numpy as np
 import tensorflow as tf
-
 #
+import json
 
-path = cv2.CascadeClassifier("GestAR-Unity-Backend/haar_cascade_face_detection.xml")
+path = cv2.CascadeClassifier("haar_cascade_face_detection.xml")
 
 # Initiate video capture for video file
 
 
 mouse = Controller()
 
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(1)
 
 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -31,13 +27,11 @@ height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 (screen_width, screen_height) = pyautogui.size()
 
 mp_hands = mp.solutions.hands
-mp_drawing = mp.solutions.drawing_utils
 
 print("type hands", type(mp_hands), mp_hands)
-print("type drawing", type(mp_drawing), mp_drawing)
 
 #
-mymodel = tf.keras.models.load_model("GestAR-Unity-Backend/model3.h5")
+mymodel = tf.keras.models.load_model("model3.h5")
 
 detector = HandDetector(detectionCon=0.8, maxHands=2)
 vals = [
@@ -183,6 +177,8 @@ def countFingers(image, hand_landmarks, handNo=0):
         #         # mouse.press(Button.left)
         #     print("Right side: ", relative_mouse_y)
 
+        print("line 180 FINGERS", fingers)
+
 
 def getLandMarks(image, hand_landmarks, handNo=0):
 
@@ -206,6 +202,7 @@ def getLandMarks(image, hand_landmarks, handNo=0):
                 if finger_tip_y > finger_bottom_y:
                     fingers.append(0)
         totalFingers = fingers.count(1)
+        print("FINGERS", fingers, "\nHAND NO", handNo)
         return totalFingers
 
 
@@ -219,8 +216,57 @@ def max_and_index(arr):
     return (vals[ind], m)
 
 
+# ░░█ █▀ █▀█ █▄░█   █▀▀ █▀█ █▀█   █░█ █▄░█ █ ▀█▀ █▄█
+# █▄█ ▄█ █▄█ █░▀█   █▀░ █▄█ █▀▄   █▄█ █░▀█ █ ░█░ ░█░
+
+'''
+WHAT TO INCLUDE
+int[] CVRes; <-- screen resolution
+ALL THE "box" ONES HAVE CENTER X, CENTER Y, WIDTH, HEIGHT
+Vector2[] headBox; <-- bounding box pos of head
+Vector2[] hand1Box; <-- bounding box pos of hand 1
+Vector2[] hand2Box; <-- bounding box pos of hand 2
+bool rightAnd1Hand; <-- to tell if it's the right or left hand when only 1 hand is visible
+bool[] hand1Fingers; <-- condition of hand 1 fingers closed or open
+bool[] hand2Fingers; <-- condition of hand 2 fingers closed or open
+string handASLText; <-- text generated from ASL model
+int slider1Amt; <-- amount of slider 1 (0 to 10 inc)
+int slider2Amt; <-- amount of slider 2 (0 to 10 inc)
+'''
+
+# open the file in the beginning so we can easily write to it continuously
+jsonForUnity = open("jsonForUnity.json", "w")
+dataForUnity = {
+    "CVRes": [0, 0],
+    "headBox": [[0, 0], [0, 0]],
+    "hand1Box": [[0, 0], [0, 0]],
+    "hand2Box": [[0, 0], [0, 0]],
+    "hand1Fingers": [False, False, False, False, False],
+    "hand2Fingers": [False, False, False, False, False],
+    "handASLText": "...",
+    "slider1Amt": 0,
+    "slider2Amt": 0
+}
+def saveJsonForUnity():
+    print("saving to json")
+    j = json.dumps(dataForUnity)
+    jsonForUnity.write(j)
+def setJsonData(obj):
+    for key in obj:
+        val = obj[key]
+        dataForUnity[key] = val;
+
+
+# ████████╗██╗░░██╗███████╗
+# ╚══██╔══╝██║░░██║██╔════╝
+# ░░░██║░░░███████║█████╗░░
+# ░░░██║░░░██╔══██║██╔══╝░░
+# ░░░██║░░░██║░░██║███████╗
+# ░░░╚═╝░░░╚═╝░░╚═╝╚══════╝
+#     W   H   I   L   E
+#       L   O   O   P
+
 while True:
-    
     success, img = cap.read()
     img = cv2.flip(img, 1)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -228,13 +274,26 @@ while True:
     results = handsms.process(img)
     hands, img = detector.findHands(img)  # With Draw
 
+    print("INITIAL RES")
+    frame_width  = cap.get(cv2.CAP_PROP_FRAME_WIDTH)   # float `width`
+    frame_height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)  # float `height`
+    print("FRAME WIDTH", frame_width)
+    print("FRAME HEIGHT", frame_height)
+
     # Get landmark position from the processed result
     hand_landmarks = results.multi_hand_landmarks
 
     # █▀▀ ▄▀█ █▀▀ █▀▀   █▄▄ █▀█ █░█ █▄░█ █▀▄ █ █▄░█ █▀▀   █▄▄ █▀█ ▀▄▀
     # █▀░ █▀█ █▄▄ ██▄   █▄█ █▄█ █▄█ █░▀█ █▄▀ █ █░▀█ █▄█   █▄█ █▄█ █░█
+    largestFace = 0
+    i = 0
     for (x, y, w, h) in face:
         cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 3)
+        # json data will get the face with largest area
+        if w * h > face[0][2] * face[0][3]:
+            largestFace = i
+            setJsonData({"headBox": [[int(x) + int(w/2), int(y) + int(w/2)], [int(w), int(h)]]})
+        i += 1
 
     # Get Hand Fingers Position
     countFingers(img, hand_landmarks)
@@ -261,13 +320,38 @@ while True:
         # length, info = detector.findDistance(lmList1[8], lmList1[12])  # no draw
 
         if len(hands) == 2:
-            print(getLandMarks(img, hand_landmarks))
+            print("LANDMARKS", getLandMarks(img, hand_landmarks))
 
             hand2 = hands[1]
             lmList2 = hand2["lmList"]  # List of 21 Landmarks points
             bbox2 = hand2["bbox"]  # Bounding Box info x,y,w,h
             centerPoint2 = hand2["center"]  # center of the hand cx,cy
             handType2 = hand2["type"]  # Hand Type Left or Right
+
+            x=y=w=h=x2=y2=w2=h2=0
+            if (handType1 == "Right"):
+                x = int(bbox1[0])
+                y = int(bbox1[1])
+                w = int(bbox1[2])
+                h = int(bbox1[3])
+
+                x2 = int(bbox2[0])
+                y2 = int(bbox2[1])
+                w2 = int(bbox2[2])
+                h2 = int(bbox2[3])
+            else:
+                x = int(bbox2[0])
+                y = int(bbox2[1])
+                w = int(bbox2[2])
+                h = int(bbox2[3])
+
+                x2 = int(bbox1[0])
+                y2 = int(bbox1[1])
+                w2 = int(bbox1[2])
+                h2 = int(bbox1[3])
+
+            setJsonData({"hand1Box": [[x + int(w/2), y + int(h/2)], [w, h]]})
+            setJsonData({"hand2Box": [[x2 + int(w2/2), y2 + int(h2/2)], [w2, h2]]})
 
             fingers2 = detector.fingersUp(hand2)
             if 0 < centerPoint2[0] < 180:
@@ -313,9 +397,15 @@ while True:
 
             # █▀█ █▀█ █▀▀ █▀▄ █ █▀▀ ▀█▀ █▀▀ █▀▄   ▄▀█ █▀ █░░   █▀▀ █ █▄░█ █▀▀ █▀▀ █▀█
             # █▀▀ █▀▄ ██▄ █▄▀ █ █▄▄ ░█░ ██▄ █▄▀   █▀█ ▄█ █▄▄   █▀░ █ █░▀█ █▄█ ██▄ █▀▄
-            # print(max_and_index(predictions[0]))
+            print("just predictions", predictions)
+            print("ln 394 PREDICTION", max_and_index(predictions[0]))
 
     cv2.imshow("output", img)
     key = cv2.waitKey(1)
     if key == 27:
         break
+    saveJsonForUnity()
+
+print("closing json file")
+jsonForUnity.close()
+print("done!")
